@@ -1,0 +1,18 @@
+const assert=require('node:assert/strict');
+const {parse,status}=require('./parser.js');
+const a=t=>parse(t,'on').items.map(x=>x.address);
+assert.deepEqual(a('Лесі Українки, 40, 44 та 38'),['Лесі Українки, 40','Лесі Українки, 44','Лесі Українки, 38']);
+assert.deepEqual(a('В.Бердичівська 4/11; 6; 8; 10'),['Велика Бердичівська, 4/11','Велика Бердичівська, 6','Велика Бердичівська, 8','Велика Бердичівська, 10']);
+assert.deepEqual(a('Крошенська 46 і 32'),['Крошенська, 46','Крошенська, 32']);
+assert.deepEqual(a('В.Бердичівська64-б'),['Велика Бердичівська, 64Б']);
+assert.deepEqual(a('[ 2 ноября 2026 г. 16:35 ] ⁨Тетяна Голова ОСББ Шевченко 12Б⁩: Шевченка 12 б є'),['Шевченка, 12Б']);
+const mixed=parse('Вітрука, 33, площа польова 15, площа польова, 13, кибальчича 6, є на вітрука, 35, прорив, нажаль, завтра зварювальник буде працювати','on');
+assert.equal(mixed.items.length,5);assert.deepEqual(mixed.items.map(x=>x.status),['on','on','on','on','break']);
+assert.equal(parse('Вацківський 9, засувки відкриті, температура подачі 16 градусів','on').items[0].status,'unknown');
+assert.equal(parse('Чуднівська 💯','on').items.length,0);
+assert.equal(parse('Бандери, Небесної Сотні вже є тепло.','on').items.length,0);
+assert.equal(status('немає тепла','on'),'off');
+assert.equal(status('порив усунуто, є тепло','unknown'),'on');
+assert.equal(parse('вулиця Нова 18, немає тепла').items[0].status,'off');
+const d=require('./data.json');assert.equal(d.buildings.length,49);assert.equal(new Set(d.buildings.map(x=>x.address)).size,49);assert.equal(d.buildings.filter(x=>x.status==='break').length,1);
+console.log('Passed: address lists, suffixes, Viber headers, incident scope, ambiguous text, no-heat, resolved incident, new street, seed consistency.');
