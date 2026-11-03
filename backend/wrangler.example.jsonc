@@ -1,0 +1,7 @@
+{
+  "name": "zhytomyr-heat-api",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-02",
+  "vars": { "ALLOWED_ORIGIN": "https://grafmars.github.io" },
+  "d1_databases": [{ "binding": "DB", "database_name": "zhytomyr-heat", "database_id": "PASTE-YOUR-D1-ID" }]
+}

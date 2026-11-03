@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
+import worker from './worker.mjs';
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(readFileSync(new URL('./schema.sql',import.meta.url),'utf8'));
+const env={EDITOR_CODE:'test-private-code',ALLOWED_ORIGIN:'https://example.github.io',DB:{prepare(sql){let args=[];return{bind(...a){args=a;return this;},async first(){return sqlite.prepare(sql).get(...args);},async run(){const r=sqlite.prepare(sql).run(...args);return{meta:{changes:r.changes}};}};}}};
+const seed=JSON.parse(readFileSync(new URL('../data.json',import.meta.url),'utf8'));
+function req(path,method='GET',body,code,origin='https://example.github.io'){return new Request('https://example.workers.dev'+path,{method,headers:{Origin:origin,'Content-Type':'application/json',...(code?{'X-Edit-Code':code}:{})},...(body?{body:JSON.stringify(body)}:{})});}
+assert.equal((await worker.fetch(req('/map'),env)).status,404);
+assert.equal((await worker.fetch(req('/auth','POST',null,'wrong'),env)).status,401);
+assert.equal((await worker.fetch(req('/map','PUT',{revision:0,data:seed}),env)).status,401);
+assert.equal((await worker.fetch(req('/auth','POST',null,'test-private-code'),env)).status,200);
+assert.equal((await worker.fetch(req('/map','PUT',{revision:0,data:seed},'test-private-code'),env)).status,200);
+const publicData=await (await worker.fetch(req('/map'),env)).json();assert.equal(publicData.data.buildings.length,106);assert.equal(publicData.revision,1);
+assert.equal((await worker.fetch(req('/map','PUT',{revision:0,data:seed},'test-private-code'),env)).status,409);
+seed.buildings[0].status='off';assert.equal((await worker.fetch(req('/map','PUT',{revision:1,data:seed},'test-private-code'),env)).status,200);
+assert.equal((await (await worker.fetch(req('/map'),env)).json()).data.buildings[0].status,'off');
+assert.equal((await worker.fetch(req('/map','PUT',{revision:1,data:seed},'test-private-code'),env)).status,409);
+assert.equal((await worker.fetch(req('/map','PUT',{revision:2,data:seed},'test-private-code','https://other.example'),env)).status,403);
+seed.boilers[0].color='bad';assert.equal((await worker.fetch(req('/map','PUT',{revision:2,data:seed},'test-private-code'),env)).status,400);
+console.log('Passed: code gate, unauthorised write rejection, initial publish, public read, update, revision conflict, origin check, malformed-data rejection.');

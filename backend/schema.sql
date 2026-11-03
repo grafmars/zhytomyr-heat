@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS heat_state (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  revision INTEGER NOT NULL,
+  body TEXT NOT NULL
+);
