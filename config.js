@@ -1,5 +1,4 @@
 window.HEAT_CONFIG = {
-  // Єдине налаштування сайту: вставте адресу Worker після його створення.
-  API_URL: '',
+  API_URL: 'https://zhytomyr-heat-api.graf-maryna.workers.dev',
   REFRESH_MS: 5000
 };
