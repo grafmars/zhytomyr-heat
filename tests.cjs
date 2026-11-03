@@ -14,5 +14,17 @@ assert.equal(parse('Бандери, Небесної Сотні вже є теп
 assert.equal(status('немає тепла','on'),'off');
 assert.equal(status('порив усунуто, є тепло','unknown'),'on');
 assert.equal(parse('вулиця Нова 18, немає тепла').items[0].status,'off');
-const d=require('./data.json');assert.equal(d.buildings.length,49);assert.equal(new Set(d.buildings.map(x=>x.address)).size,49);assert.equal(d.buildings.filter(x=>x.status==='break').length,1);
+const d=require('./data.json');assert.equal(d.buildings.length,106);assert.equal(new Set(d.buildings.map(x=>x.address)).size,106);assert.equal(d.buildings.filter(x=>x.status==='break').length,2);
 console.log('Passed: address lists, suffixes, Viber headers, incident scope, ambiguous text, no-heat, resolved incident, new street, seed consistency.');
+
+assert.deepEqual(a('Кибальчича 10 та14'),['Кибальчича, 10','Кибальчича, 14']);
+assert.deepEqual(a('Бориса Тена 90/1,92,96 запустили сьогодні'),['Бориса Тена, 90/1','Бориса Тена, 92','Бориса Тена, 96']);
+assert.equal(parse('[ 3 ноября 2026 г. 8:12 ] Богдан: Шевченко 103','off','2026-11-02').items[0].updatedAt,'2026-11-03T08:12:00+02:00');
+assert.equal(parse('[ 3 ноября 2026 г. 7:49 ] Vitaliy: 32 тепло відсутнє','unknown','2026-11-03','Малікова').items[0].address,'Малікова, 32');
+assert.equal(parse('Кондратюка 7 є теплоносій','off').items[0].status,'unknown');
+assert.equal(parse('Івана Мазепи 13/2 щойно подали тепло','off').items[0].status,'on');
+assert.equal(parse('Проспект Миру 4, ще тепла не бачимо.','on').items[0].status,'off');
+assert.equal(d.buildings.find(x=>x.address==='Шевченка, 103').status,'off');
+assert.equal(d.buildings.find(x=>x.address==='Івана Мазепи, 85').status,'off');
+assert.equal(d.buildings.find(x=>x.address==='Гоголівська, 94').history.length,2);
+console.log('Passed November 2–3 context, latest status, compound addresses, current outage and history checks.');
