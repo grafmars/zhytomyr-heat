@@ -2,8 +2,8 @@
 'use strict';
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statuses={on:['Є тепло','#168564','●'],weak:['Слабке тепло','#d69a32','◐'],off:['Немає тепла','#546e95','−'],break:['Аварія / порив','#d44b55','×'],unknown:['Не підтверджено','#8a9690','?']};
-const config=window.HEAT_CONFIG||{};
-let previousDraft=null,onlyMissing=false;
+const config=window.HEAT_CONFIG||{}, api=(config.API_URL||'').replace(/\/$/,'');
+let editCode='',serverRevision=0,syncBusy=false,syncTimer=null,syncGeneration=0,syncBlocked=false,previousDraft=null,onlyMissing=false,remoteReady=false;
 const storageKey='zhytomyr-heat-v1:'+location.pathname;
 let data,published,map,layers,editing=false,activeStatus='all',activeTab='houses',pending=[],unresolved=[],picking=null,markers=new Map(),visibleBoilers=new Set(),dirty=false;
 const clone=x=>JSON.parse(JSON.stringify(x));
@@ -12,7 +12,7 @@ const validCoords=r=>Number.isFinite(r.lat)&&Number.isFinite(r.lng)&&r.lat>=50.1
 const safeUrl=s=>/^https?:\/\//i.test(s||'')?s:'';
 function toast(s){$('toast').textContent=s;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,6500);}
 function options(selected){return Object.entries(statuses).map(([v,[n]])=>`<option value="${v}" ${v===selected?'selected':''}>${n}</option>`).join('');}
-function save(){if(!editing)return;data.updatedAt=now();dirty=true;try{localStorage.setItem(storageKey,JSON.stringify({baseRevision:published.revision,data}));}catch(e){toast('Не вдалося зберегти чернетку. Завантажте data.json, щоб не втратити зміни.');}render();syncMessage('Чернетка збережена у браузері. Для всіх: завантажте data.json на GitHub.');}
+function save(){if(!editing)return;data.updatedAt=now();dirty=true;syncGeneration++;try{localStorage.setItem(storageKey,JSON.stringify({baseRevision:published.revision,data}));}catch(e){toast('Не вдалося зберегти чернетку. Завантажте data.json, щоб не втратити зміни.');}render();if(api&&remoteReady){clearTimeout(syncTimer);syncTimer=setTimeout(publishChanges,250);}else syncMessage('Лише у вашому браузері · спільний сервер не підключено',true);}
 function setEditing(value){editing=value;document.querySelectorAll('.editor').forEach(e=>e.hidden=!editing);$('editToggle').textContent=editing?'Режим перегляду':'Редагувати карту';render();}
 function filtered(){const q=$('search').value.trim().toLowerCase();return data.buildings.filter(h=>(activeStatus==='all'||h.status===activeStatus)&&HeatParser.key(h.address).includes(HeatParser.key(q))&&(!onlyMissing||!validCoords(h)||h.review));}
 function render(){
@@ -21,7 +21,7 @@ function render(){
  $('list').innerHTML=rows.map(h=>`<article class="house" tabindex="0" data-house="${esc(h.id)}"><span class="dot" style="background:${statuses[h.status][1]}"></span><div><h3>${esc(h.address)}</h3><p>${statuses[h.status][0]} · ${new Date(h.updatedAt).toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Kyiv'})}</p>${!validCoords(h)||h.review?`<span class="tag">${h.review?'Уточнити адресу':esc(h.geoError||'Координати не знайдено — натисніть ✎')}</span>`:''}</div>${editing?`<button data-edit-house="${esc(h.id)}" class="go" title="Редагувати адресу, стан і координати">Редагувати</button>`:'<span class="go">↗</span>'}</article>`).join('')||'<p class="hint" style="padding:20px">Адрес не знайдено.</p>';
  if(editing&&data.unresolved.length)$('list').insertAdjacentHTML('afterbegin',`<div class="notice"><b>Без адреси: ${data.unresolved.length}</b>${data.unresolved.map((u,i)=>`<p>${esc(u.text)}<br><small>${esc(u.note)}</small> <button data-resolve="${i}">Уточнити</button><button data-dismiss="${i}">Прибрати</button></p>`).join('')}</div>`);
  $('updated').textContent='Дані: '+new Date(data.updatedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',dateStyle:'short',timeStyle:'short'});
- $('draftState').textContent='Збережіть data.json і замініть цей файл на GitHub — зміни побачать усі.';
+ $('draftState').textContent=api?(dirty?'Є неопубліковані зміни.':'Завантажена спільна версія.'): 'Для спільного збереження виконайте START.md.';
  $('boilerList').innerHTML=data.boilers.map(b=>`<div class="boiler"><label><input type="checkbox" data-visible="${esc(b.id)}" ${visibleBoilers.has(b.id)?'checked':''}><span style="color:${b.color}">■</span> ${esc(b.name)}</label><small>${data.buildings.filter(h=>h.boilerId===b.id).length} будинків · ${validCoords(b)?'точка є':'точку не знайдено'}</small><small>${esc(b.note)}</small>${safeUrl(b.source)?`<a href="${esc(b.source)}" target="_blank" rel="noopener">Джерело</a> `:''}${editing?`<button data-boiler="${esc(b.id)}">Редагувати</button>`:''}</div>`).join('');
  if(!map)return;layers.clearLayers();markers.clear();let n=0;
  for(const h of rows){if(!validCoords(h)||h.review)continue;const st=statuses[h.status],b=data.boilers.find(b=>b.id===h.boilerId);const marker=L.marker([h.lat,h.lng],{icon:L.divIcon({className:'',html:`<div class="pin" style="width:23px;height:23px;background:${st[1]}">${st[2]}</div>`,iconSize:[23,23],iconAnchor:[11,11]})});
@@ -40,7 +40,7 @@ function upsert(row){const old=data.buildings.find(h=>HeatParser.key(h.address)=
 function validate(d){if(d.schemaVersion!==1||!Array.isArray(d.buildings)||!Array.isArray(d.boilers)||!Array.isArray(d.unresolved))throw Error('Очікується файл даних версії 1.');const ids=new Set(),keys=new Set();for(const h of d.buildings){if(!h.id||ids.has(h.id)||typeof h.address!=='string'||!h.address.trim()||!statuses[h.status]||!Number.isFinite(Date.parse(h.updatedAt)))throw Error('Некоректний запис будинку.');ids.add(h.id);if(keys.has(HeatParser.key(h.address)))throw Error('Дубль адреси: '+h.address);keys.add(HeatParser.key(h.address));if((h.lat!==null||h.lng!==null)&&!validCoords(h))throw Error('Неправильні координати: '+h.address);if(h.note!=null&&typeof h.note!=='string')throw Error('Некоректна примітка.');}const bids=new Set();for(const b of d.boilers){if(!b.id||bids.has(b.id)||typeof b.name!=='string'||typeof b.address!=='string'||!/^#[0-9a-f]{6}$/i.test(b.color)||!Array.isArray(b.order))throw Error('Некоректна котельня.');bids.add(b.id);if((b.lat!==null||b.lng!==null)&&!validCoords(b))throw Error('Некоректні координати котельні.');}if(d.buildings.some(h=>h.boilerId&&!bids.has(h.boilerId)))throw Error('Невідома котельня у прив’язці.');return d;}
 document.addEventListener('click',e=>{const t=e.target.closest('button');if(!t)return;if(t.hasAttribute('data-close'))t.closest('dialog').close();if(t.dataset.filter){activeStatus=t.dataset.filter;render();}if(t.dataset.tab){activeTab=t.dataset.tab;$('houses').hidden=activeTab!=='houses';$('boilers').hidden=activeTab!=='boilers';document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x.dataset.tab===activeTab));}if(t.dataset.editHouse)openHouse(t.dataset.editHouse);if(t.dataset.boiler||t.dataset.editBoiler)openBoiler(t.dataset.boiler||t.dataset.editBoiler);if(t.dataset.dismiss!==undefined&&confirm('Прибрати повідомлення без адреси?')){data.unresolved.splice(Number(t.dataset.dismiss),1);save();}if(t.dataset.resolve!==undefined){const u=data.unresolved[Number(t.dataset.resolve)];openHouse('',{note:u.text+' '+u.note});}});
 $('list').addEventListener('click',e=>{if(e.target.closest('button'))return;const row=e.target.closest('[data-house]');if(!row)return;const h=data.buildings.find(h=>h.id===row.dataset.house);if(markers.has(h.id)){map.setView([h.lat,h.lng],17);markers.get(h.id).openPopup();}else if(editing)openHouse(h.id);else toast(h.address+' · '+statuses[h.status][0]+'. '+(h.note||'Точку цієї адреси ще потрібно уточнити.'));});
-$('list').addEventListener('keydown',e=>{if(e.key==='Enter')e.target.click();});$('search').oninput=render;$('editToggle').onclick=async()=>{if(editing){stopLocate=true;setEditing(false);return;}$('editorCode').value='';$('codeError').textContent='';$('codeDialog').showModal();$('editorCode').focus();};
+$('list').addEventListener('keydown',e=>{if(e.key==='Enter')e.target.click();});$('search').oninput=render;$('editToggle').onclick=async()=>{if(editing){if(dirty&&api){await publishChanges();if(dirty){toast('Зміни ще не опубліковано. Збережіть копію або повторіть спробу.');return;}}editCode='';stopLocate=true;setEditing(false);return;}if(!api){toast('Потрібне одноразове підключення збереження: вкажіть API_URL у config.js за інструкцією START.md.');return;}$('editorCode').value='';$('codeError').textContent='';$('codeDialog').showModal();$('editorCode').focus();};
 $('fit').onclick=()=>{if(map&&layers.getLayers().length)map.fitBounds(layers.getBounds(),{padding:[55,55],maxZoom:16});};
 $('allBoilers').onclick=()=>{data.boilers.forEach(b=>visibleBoilers.add(b.id));render();};$('noBoilers').onclick=()=>{visibleBoilers.clear();render();};$('newBoiler').onclick=()=>openBoiler();
 $('boilerList').onchange=e=>{const id=e.target.dataset.visible;if(id){e.target.checked?visibleBoilers.add(id):visibleBoilers.delete(id);render();}};
@@ -54,19 +54,21 @@ $('pickHouse').onclick=()=>pick('house');$('pickBoiler').onclick=()=>pick('boile
 let lastLookup=0;$('geocode').onclick=async()=>{if(locating){toast('Дочекайтеся завершення пошуку списку або зупиніть його.');return;}if(Date.now()-lastLookup<1500)return;lastLookup=Date.now();$('geocode').disabled=true;$('geoResults').textContent='Пошук…';try{const q=new URLSearchParams({q:'Житомир, '+$('houseAddress').value,format:'jsonv2',addressdetails:'1',limit:'5',countrycodes:'ua',bounded:'1',viewbox:'28.45,50.4,28.9,50.15'});const res=await fetch('https://nominatim.openstreetmap.org/search?'+q,{signal:AbortSignal.timeout(15000)});if(!res.ok)throw Error();const rows=await res.json();$('geoResults').innerHTML='';if(!rows.length)$('geoResults').textContent='Точного збігу не знайдено. Оберіть точку вручну.';rows.forEach(r=>{const btn=document.createElement('button');btn.type='button';btn.textContent=r.display_name;btn.className='wide';btn.onclick=()=>{$('houseLat').value=r.lat;$('houseLng').value=r.lon;if(map)map.setView([r.lat,r.lon],17);toast('Координати обрано. Натисніть «Зберегти».');};$('geoResults').append(btn);});}catch(e){$('geoResults').textContent='Пошук недоступний. Оберіть точку на карті або введіть координати.';}finally{$('geocode').disabled=false;}};
 $('boilerForm').onsubmit=e=>{e.preventDefault();try{const id=$('boilerId').value||crypto.randomUUID(),old=data.boilers.find(b=>b.id===id),pos=coordInput('boiler');const addresses=[...new Set($('boilerAddresses').value.split('\n').map(s=>s.trim()).filter(Boolean))];const reassigned=addresses.filter(a=>data.buildings.some(h=>HeatParser.key(h.address)===HeatParser.key(a)&&h.boilerId&&h.boilerId!==id));if(reassigned.length&&!confirm('Переприв’язати до цієї котельні: '+reassigned.join('; ')+'?'))return;const b={...old,id,name:$('boilerName').value.trim(),address:$('boilerAddress').value.trim(),color:$('boilerColor').value,note:$('boilerNote').value,source:$('boilerSource').value,...pos,geo:pos.lat===null?'missing':'manual',order:[]};data.buildings.filter(h=>h.boilerId===id).forEach(h=>h.boilerId='');for(const a of addresses){let h=data.buildings.find(h=>HeatParser.key(h.address)===HeatParser.key(a));if(!h){upsert({address:a,status:'unknown',note:''});h=data.buildings.at(-1);}h.boilerId=id;b.order.push(h.id);}if(old)Object.assign(old,b);else data.boilers.push(b);visibleBoilers.add(id);save();$('boilerDialog').close();locateMissing();}catch(e){toast(e.message);}};
 $('deleteBoiler').onclick=()=>{if(!confirm('Видалити котельню? Її будинки залишаться без прив’язки.'))return;const id=$('boilerId').value;data.boilers=data.boilers.filter(b=>b.id!==id);data.buildings.filter(h=>h.boilerId===id).forEach(h=>h.boilerId='');visibleBoilers.delete(id);save();$('boilerDialog').close();};
-$('export').onclick=()=>{const out=clone(data);out.revision=now();const blob=new Blob([JSON.stringify(out,null,2)+'\n'],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='data.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Замініть data.json у GitHub. Після публікації зміни побачать усі.');};
+$('export').onclick=()=>{const out=clone(data);out.revision=now();const blob=new Blob([JSON.stringify(out,null,2)+'\n'],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='data.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast(api?'Резервну копію завантажено.':'Для публікації всім замініть data.json у GitHub або підключіть сервер.');};
 $('import').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;if(f.size>5000000)throw Error('Файл завеликий (максимум 5 МБ).');const next=validate(JSON.parse(await f.text()));if(!confirm('Замінити локальну чернетку даними з файлу?'))return;stopLocate=true;data=next;save();toast('Дані імпортовано до локальної чернетки.');}catch(e){toast('Імпорт не виконано: '+e.message);}finally{e.target.value='';}};
 $('reset').onclick=async()=>{
+ if(syncBusy){toast('Дочекайтеся завершення збереження.');return;}
  if(!confirm('Повернути спільну опубліковану карту? Перед цим експортуйте потрібні локальні зміни.'))return;
  stopLocate=true;
- try{let fresh=clone(published);
- previousDraft={data:clone(data)};published=clone(fresh);data=fresh;localStorage.removeItem(storageKey);dirty=false;render();syncMessage('Завантажено опубліковані дані');
+ try{let fresh=clone(published);if(api){const r=await fetch(api+'/map',{cache:'no-store',signal:AbortSignal.timeout(12000)});if(!r.ok)throw Error('Не вдалося завантажити спільну карту. Локальні дані збережено.');const out=await r.json();fresh=validate(out.data);serverRevision=out.revision;remoteReady=true;}
+ previousDraft={data:clone(data)};published=clone(fresh);data=fresh;localStorage.removeItem(storageKey);dirty=false;syncBlocked=false;render();syncMessage(api?'Завантажено спільну карту':'Завантажено дані з файлу сайту');
  }catch(e){toast(e.message);}
 };
 async function init(){try{
  const res=await fetch('./data.json',{cache:'no-store'});if(!res.ok)throw Error('Не вдалося прочитати data.json');published=validate(await res.json());data=clone(published);
  try{previousDraft=JSON.parse(localStorage.getItem(storageKey)||'null');}catch{}
- syncMessage('Перегляд опублікованої карти');
+ if(api){try{const r=await fetch(api+'/map',{cache:'no-store',signal:AbortSignal.timeout(12000)});if(r.status===404){serverRevision=0;remoteReady=true;syncMessage('Спільна база порожня. Редактор може опублікувати початкову карту.');}else{if(!r.ok)throw Error();const out=await r.json();published=validate(out.data);data=clone(published);serverRevision=out.revision;remoteReady=true;syncMessage('Спільна карта · оновлення кожні 5 секунд');}}catch{syncMessage('Сервер недоступний. Показано резервні дані; публікація вимкнена.',true);}}
+ else syncMessage('Перегляд · спільне збереження ще не підключено (START.md)',true);
  if(window.L){map=L.map('map',{zoomControl:false}).setView([50.260,28.665],13);L.control.zoom({position:'topright'}).addTo(map);L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',{attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> Tiles © <a href="https://www.openstreetmap.fr/">OSM France</a> · HOT',maxZoom:19}).addTo(map).on('tileerror',()=>{if(!init.tileWarned){init.tileWarned=true;toast('Не завантажується підкладка карти. Перевірте інтернет. Список адрес доступний.');}});layers=L.featureGroup().addTo(map);map.on('click',e=>{if(!picking)return;const type=picking;picking=null;$(type+'Lat').value=e.latlng.lat.toFixed(7);$(type+'Lng').value=e.latlng.lng.toFixed(7);$('map').style.cursor='';$(type+'Dialog').showModal();});}else{$('mapError').hidden=false;$('mapError').textContent='Бібліотека карти не завантажилася. Перевірте інтернет та оновіть сторінку. Список і редактор залишаються доступними.';}
  $('importDate').value=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Kyiv'}).format(new Date());render();
  }catch(e){$('list').innerHTML='<p class="notice">Не вдалося завантажити дані. Відкрийте сайт через GitHub Pages або локальний вебсервер, а не подвійним кліком по HTML.</p>';$('mapCount').textContent=e.message;}}
@@ -96,11 +98,34 @@ $('locateTop').onclick=locateMissing;
 $('codeForm').onsubmit=async e=>{
  e.preventDefault();const code=$('editorCode').value;$('codeSubmit').disabled=true;
  try{
-  if(code!==config.EDITOR_CODE)throw Error('Неправильний код.');
-  $('editorCode').value='';$('codeDialog').close();setEditing(true);
+  if(api){const r=await fetch(api+'/auth',{method:'POST',headers:{'X-Edit-Code':code},signal:AbortSignal.timeout(12000)});if(!r.ok)throw Error(r.status===401?'Неправильний код.':'Сервер недоступний або не налаштований.');}
+  else throw Error('Спільне збереження ще не підключено. Виконайте START.md.');
+  editCode=code;$('editorCode').value='';$('codeDialog').close();setEditing(true);
+  if(api&&!remoteReady)await refreshShared();if(api&&dirty&&remoteReady)await publishChanges();
+  if(api&&serverRevision===0&&remoteReady){if(confirm('Спільна база порожня. Опублікувати поточну карту для всіх?'))save();}
   if(previousDraft)toast('Ваші попередні записи доступні: «Дані та публікація → Відновити попередню чернетку».');
  }catch(e){$('codeError').textContent=e.message;}finally{$('codeSubmit').disabled=false;}
 };
+async function publishChanges(){
+ if(!api||!editing||!editCode||!dirty||syncBusy||syncBlocked||!remoteReady)return;
+ syncBusy=true;const generation=syncGeneration,copy=clone(data);syncMessage('Зберігаю зміни для всіх…');
+ try{const r=await fetch(api+'/map',{method:'PUT',headers:{'Content-Type':'application/json','X-Edit-Code':editCode},body:JSON.stringify({revision:serverRevision,data:copy}),signal:AbortSignal.timeout(15000)});
+  if(!r.ok){if(r.status===409){syncBlocked=true;throw Error('Конфлікт версій. Експортуйте свою копію, потім завантажте актуальну карту.');}if(r.status===401){editCode='';stopLocate=true;setEditing(false);throw Error('Код змінився. Натисніть «Редагувати карту» та введіть новий код.');}throw Error('Збереження не підтверджено. Є локальна копія; натисніть «Повторити збереження».');}
+  const result=await r.json();serverRevision=result.revision;copy.revision=String(result.revision);published=copy;
+  if(generation===syncGeneration){data.revision=copy.revision;dirty=false;try{localStorage.removeItem(storageKey);}catch{}syncMessage('Збережено для всіх · '+new Date().toLocaleTimeString('uk-UA'));render();}
+ }catch(e){syncMessage(e.message,true);}finally{syncBusy=false;}
+ if(dirty&&generation!==syncGeneration&&!syncBlocked){clearTimeout(syncTimer);syncTimer=setTimeout(publishChanges,300);}
+}
+async function refreshShared(){
+ if(!api||!data||syncBusy||document.hidden||(dirty&&remoteReady)||(editing&&remoteReady&&!syncBlocked))return;
+ try{const r=await fetch(api+'/map',{cache:'no-store',signal:AbortSignal.timeout(10000)});if(r.status===404&&serverRevision===0){remoteReady=true;return;}if(!r.ok)throw Error();const result=await r.json();
+  // A local edit may have started while the GET was in flight.
+  if(syncBusy)return;if(dirty){if(result.revision===serverRevision){remoteReady=true;await publishChanges();}else{syncBlocked=true;syncMessage('На сервері інша версія. Експортуйте чернетку та завантажте актуальні дані.',true);}return;}remoteReady=true;
+  if(result.revision!==serverRevision){published=validate(result.data);data=clone(published);serverRevision=result.revision;render();}
+  syncMessage('Спільна карта · оновлення кожні 5 секунд');
+ }catch{syncMessage('Немає зв’язку із сервером. Показано останні завантажені дані.',true);}
+}
+$('retrySync').onclick=async()=>{if(!api){toast('Спочатку підключіть API_URL у config.js.');return;}if(syncBlocked){toast('Спочатку експортуйте свою копію та поверніть опубліковані дані.');return;}if(!remoteReady){await refreshShared();}await publishChanges();};
 $('recoverDraft').onclick=()=>{
  if(!editing)return;if(!previousDraft?.data){toast('Попередньої чернетки не знайдено. Можна імпортувати збережений JSON.');return;}
  if(!confirm('Об’єднати попередню чернетку з поточною картою? Новіші записи чернетки оновлять відповідні адреси.'))return;
@@ -110,4 +135,5 @@ $('recoverDraft').onclick=()=>{
   previousDraft=null;activeStatus='all';onlyMissing=false;$('search').value='';save();locateMissing();toast('Чернетку відновлено; нові адреси збережено.');
  }catch(e){toast('Не вдалося відновити чернетку: '+e.message);}
 };
-
+setInterval(refreshShared,Math.max(5000,config.REFRESH_MS||5000));
+window.addEventListener('beforeunload',e=>{if(api&&dirty){e.preventDefault();e.returnValue='';}});

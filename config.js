@@ -1,4 +1,5 @@
 window.HEAT_CONFIG = {
-  // Змінюйте код у наступному рядку:
-  EDITOR_CODE: 'draft@#meriA0'
+  // Єдине налаштування сайту: вставте адресу Worker після його створення.
+  API_URL: '',
+  REFRESH_MS: 5000
 };
