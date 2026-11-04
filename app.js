@@ -15,10 +15,17 @@ function toast(s){$('toast').textContent=s;$('toast').hidden=false;clearTimeout(
 function options(selected){return Object.entries(statuses).map(([v,[n]])=>`<option value="${v}" ${v===selected?'selected':''}>${n}</option>`).join('');}
 function save(){if(!editing)return;deduplicate(data);data.updatedAt=now();dirty=true;syncGeneration++;try{localStorage.setItem(storageKey,JSON.stringify({baseRevision:published.revision,data}));}catch(e){toast('Не вдалося зберегти чернетку. Завантажте data.json, щоб не втратити зміни.');}render();if(api&&remoteReady){clearTimeout(syncTimer);syncTimer=setTimeout(publishChanges,250);}else syncMessage('Лише у вашому браузері · спільний сервер не підключено',true);}
 function setEditing(value){editing=value;document.querySelectorAll('.editor').forEach(e=>e.hidden=!editing);$('editToggle').textContent=editing?'Режим перегляду':'Редагувати карту';render();}
+let alphabetical=false;
+const addressOrder=new Intl.Collator('uk',{numeric:true,sensitivity:'base'});
+const sortButton=document.createElement('button');
+sortButton.type='button';sortButton.textContent='А–Я';sortButton.title='Сортувати адреси за алфавітом';sortButton.setAttribute('aria-pressed','false');
+sortButton.style.marginLeft='8px';
+sortButton.onclick=()=>{alphabetical=!alphabetical;sortButton.textContent=alphabetical?'А–Я ✓':'А–Я';sortButton.setAttribute('aria-pressed',String(alphabetical));render();};
+$('pendingOnly').after(sortButton);
 function filtered(){const q=$('search').value.trim().toLowerCase();return data.buildings.filter(h=>(activeStatus==='all'||h.status===activeStatus)&&HeatParser.key(h.address).includes(HeatParser.key(q))&&(!onlyMissing||!validCoords(h)||h.review));}
 function render(){
  $('filters').innerHTML=[['all',['Усі']],...Object.entries(statuses)].map(([s,[label,color]])=>`<button data-filter="${s}" class="${activeStatus===s?'active':''}">${color?`<span style="color:${color}">●</span> `:''}${label} ${s==='all'?data.buildings.length:data.buildings.filter(h=>h.status===s).length}</button>`).join('');
- const rows=filtered();$('pendingOnly').textContent=(onlyMissing?'Показати всі · ':'Без точки · ')+data.buildings.filter(h=>!validCoords(h)||h.review).length;$('count').textContent=data.buildings.length;
+ const rows=filtered();if(alphabetical)rows.sort((a,b)=>addressOrder.compare(a.address,b.address));$('pendingOnly').textContent=(onlyMissing?'Показати всі · ':'Без точки · ')+data.buildings.filter(h=>!validCoords(h)||h.review).length;$('count').textContent=data.buildings.length;
  $('list').innerHTML=rows.map(h=>`<article class="house" tabindex="0" data-house="${esc(h.id)}"><span class="dot" style="background:${statuses[h.status][1]}"></span><div><h3>${esc(h.address)}</h3><p>${statuses[h.status][0]} · ${new Date(h.updatedAt).toLocaleTimeString('uk-UA',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Kyiv'})}</p>${!validCoords(h)||h.review?`<span class="tag">${h.review?'Уточнити адресу':esc(h.geoError||'Координати не знайдено — натисніть ✎')}</span>`:''}</div>${editing?`<button data-edit-house="${esc(h.id)}" class="go" title="Редагувати адресу, стан і координати">Редагувати</button>`:'<span class="go">↗</span>'}</article>`).join('')||'<p class="hint" style="padding:20px">Адрес не знайдено.</p>';
  if(editing&&data.unresolved.length)$('list').insertAdjacentHTML('afterbegin',`<div class="notice"><b>Без адреси: ${data.unresolved.length}</b>${data.unresolved.map((u,i)=>`<p>${esc(u.text)}<br><small>${esc(u.note)}</small> <button data-resolve="${i}">Уточнити</button><button data-dismiss="${i}">Прибрати</button></p>`).join('')}</div>`);
  $('updated').textContent='Дані: '+new Date(data.updatedAt).toLocaleString('uk-UA',{timeZone:'Europe/Kyiv',dateStyle:'short',timeStyle:'short'});
@@ -159,4 +166,5 @@ $('recoverDraft').onclick=()=>{
 };
 setInterval(refreshShared,Math.max(5000,config.REFRESH_MS||5000));
 window.addEventListener('beforeunload',e=>{if(api&&dirty){e.preventDefault();e.returnValue='';}});
+
 
