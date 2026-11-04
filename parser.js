@@ -19,7 +19,16 @@ Object.assign(aliases,{
 });
 aliases['Довженка']=['довженк[ао]'];
 aliases['проспект Миру'].push('по\\.\\s*миру');
-function key(s){return s.toLowerCase().replace(/вул(?:иця)?\.?/g,'').replace(/[\s,.-]/g,'').replace(/і/g,'і');}
+function key(s){
+ s=String(s||'').normalize('NFKC').replace(/[\u200e\u200f\u2066-\u2069]/g,'').toLowerCase().trim();
+ const m=s.match(/^(.*?)[\s,№]*(\d+(?:\s*\/\s*\d+)?\s*-?\s*[а-яіїєґa-z]?)\s*$/iu);
+ if(m&&m[1].trim()){
+  let street=m[1].replace(/^(?:м\.?\s*житомир|житомир)\s*,?\s*/u,'').replace(/^(?:вулиця|вул\.)\s*/u,'').replace(/[,\s]+$/u,'').trim();
+  for(const [canonical,patterns] of Object.entries(aliases))if(patterns.some(pattern=>new RegExp('^(?:'+pattern+')$','iu').test(street))){street=canonical.toLowerCase();break;}
+  return street.replace(/[\s,.–—-]/g,'').replace(/[’`ʼ]/g,"'")+'|'+number(m[2]);
+ }
+ return s.replace(/^(?:вулиця|вул\.)\s*/u,'').replace(/[\s,.–—-]/g,'');
+}
 function number(s){return s.replace(/\s|-/g,'').toUpperCase().replace(/[ABCEHIKMOPTX]/g,c=>({A:'А',B:'В',C:'С',E:'Е',H:'Н',I:'І',K:'К',M:'М',O:'О',P:'Р',T:'Т',X:'Х'}[c]));}
 function status(s,fallback){
  if(/(?:порив|прорив|аварі|вит[іо]к)/iu.test(s)&&!/порив\s+(?:усунуто|ліквідовано)|прорив\s+(?:усунуто|ліквідовано)/iu.test(s))return 'break';
@@ -67,3 +76,4 @@ function parse(text,fallback='unknown',day='',contextStreet=''){
 }
 root.HeatParser={parse,key,number,status,aliases};if(typeof module!=='undefined')module.exports=root.HeatParser;
 })(typeof window!=='undefined'?window:globalThis);
+
